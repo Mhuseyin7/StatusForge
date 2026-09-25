@@ -5,8 +5,9 @@ Revises:
 Create Date: 2026-09-25
 """
 from alembic import op
-from app.database import Base
+
 import app.models  # noqa: F401
+from app.database import Base
 
 revision = "0001_initial"
 down_revision = None
