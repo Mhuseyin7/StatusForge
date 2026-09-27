@@ -21,11 +21,13 @@ Bu proje açık kaynaklıdır ve **[muhammedkoca.com.tr](https://muhammedkoca.co
 ## Öne çıkanlar
 
 - **Self-hosted deployment:** Docker Compose ile kendi infrastructure’ında çalışır.
-- **Monitor engine:** HTTP/HTTPS, TCP ve heartbeat kontrolleri için background worker altyapısı sunar; genişletilebilir monitor modelinde DNS, SSL, domain, JSON/API, keyword ve ping türleri de bulunur.
+- **Monitor engine:** HTTP/HTTPS, TCP, ICMP ping, DNS, SSL certificate, domain-expiration, keyword, JSON/API ve heartbeat kontrollerini background worker’larda çalıştırır.
 - **Incident lifecycle:** Tek bir geçici hatada alarm üretmemek için configurable failure/recovery confirmation kullanır.
 - **Multi-tenant access:** Organization, member role ve tenant isolation yaklaşımıyla ekip kullanımına uygundur.
 - **Security first:** Argon2id password hashing, rotating refresh sessions, API-key hashing, audit logging ve SSRF koruması içerir.
-- **Operations dashboard:** Responsive, dark/light theme destekli developer-focused dashboard arayüzü vardır.
+- **Operations dashboard:** Register/login, canlı monitor summary ve ilk monitor oluşturma akışı içeren responsive developer dashboard sağlar.
+- **Status pages & maintenance:** Public-safe status page components, active incident görünümü ve maintenance notification suppression desteği sunar.
+- **Webhook delivery:** HMAC SHA-256 imzalı outgoing webhook event’leri ve delivery logları içerir.
 - **Open API:** REST API, OpenAPI schema ve interaktif documentation sağlar.
 
 ## Mimari
@@ -159,6 +161,9 @@ Temel resource grupları:
 - `organizations` — workspace ve membership erişimi
 - `monitors` — monitor oluşturma, kontrol kuyruğa alma ve check history
 - `api-keys` — scope destekli organization API key yönetimi
+- `maintenance` — planned maintenance windows ve alert suppression
+- `status-pages` — public status page ve component yönetimi
+- `notification-providers` / `webhooks` — provider model ve signed webhook delivery
 
 API hata cevapları tutarlı bir form kullanır:
 
@@ -183,10 +188,6 @@ StatusForge güvenliği product architecture’ın temel parçası olarak ele al
 - API response’larında request ID, güvenli security header’ları ve validation error formatı uygulanır.
 
 Vulnerability bildirimleri için [SECURITY.md](SECURITY.md) dosyasını incele.
-
-## Roadmap
-
-Platformun genişletilebilir domain modeli; status pages, maintenance windows, notification providers, outgoing webhooks, SSL/domain/DNS monitor executors ve gelişmiş analytics gibi reliability capability’leri için tasarlanmıştır. Her yeni capability, test ve güvenlik incelemesiyle birlikte eklenmelidir.
 
 ## Katkı
 

@@ -6,7 +6,7 @@ RUN pip install --no-cache-dir --prefix=/install .
 
 FROM python:3.13-alpine
 WORKDIR /app
-RUN addgroup -S statusforge && adduser -S statusforge -G statusforge && apk add --no-cache libffi wget
+RUN addgroup -S statusforge && adduser -S statusforge -G statusforge && apk add --no-cache iputils libffi wget
 COPY --from=builder /install /usr/local
 COPY apps/api /app
 RUN chown -R statusforge:statusforge /app

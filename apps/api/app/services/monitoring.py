@@ -1,10 +1,13 @@
 import asyncio
 import ipaddress
+import json
 import socket
+import ssl
 import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+import dns.resolver
 import httpx
 
 from app.config import get_settings
@@ -83,6 +86,8 @@ async def http_check(monitor: Monitor) -> CheckResult:
             return CheckResult(MonitorStatus.DOWN, elapsed, response.status_code, "KEYWORD_MISSING", "Expected keyword was not found")
         if forbidden_keyword and forbidden_keyword in body:
             return CheckResult(MonitorStatus.DOWN, elapsed, response.status_code, "KEYWORD_PRESENT", "Forbidden keyword was found")
+        if monitor.type == MonitorType.JSON and not json_assertions(response, config.get("assertions", [])):
+            return CheckResult(MonitorStatus.DOWN, elapsed, response.status_code, "JSON_ASSERTION_FAILED", "One or more JSON assertions failed")
         return CheckResult(MonitorStatus.UP, elapsed, response.status_code, metadata={"payload_bytes": len(response.content), "redirects": redirects})
     except UnsafeTargetError as exc:
         return CheckResult(MonitorStatus.DOWN, None, error_code="UNSAFE_TARGET", error_message=str(exc))
@@ -90,6 +95,32 @@ async def http_check(monitor: Monitor) -> CheckResult:
         return CheckResult(MonitorStatus.DOWN, None, error_code="TIMEOUT", error_message="Request timed out")
     except httpx.HTTPError as exc:
         return CheckResult(MonitorStatus.DOWN, None, error_code="NETWORK_ERROR", error_message=str(exc)[:500])
+
+
+def json_assertions(response: httpx.Response, assertions: list[dict]) -> bool:
+    if not assertions:
+        return True
+    try:
+        data = response.json()
+    except json.JSONDecodeError:
+        return False
+    for assertion in assertions:
+        value = data
+        for key in str(assertion.get("path", "")).strip("$.").split("."):
+            if not key or not isinstance(value, dict) or key not in value:
+                return False
+            value = value[key]
+        operator = assertion.get("operator", "equals")
+        expected = assertion.get("value")
+        if operator == "exists" and value is None:
+            return False
+        if operator == "equals" and value != expected:
+            return False
+        if operator == "min" and (not isinstance(value, (int, float)) or value < expected):
+            return False
+        if operator == "max" and (not isinstance(value, (int, float)) or value > expected):
+            return False
+    return True
 
 
 async def tcp_check(monitor: Monitor) -> CheckResult:
@@ -106,9 +137,84 @@ async def tcp_check(monitor: Monitor) -> CheckResult:
         return CheckResult(MonitorStatus.DOWN, None, error_code="TCP_ERROR", error_message=str(exc)[:500])
 
 
+async def dns_check(monitor: Monitor) -> CheckResult:
+    host = str(monitor.config.get("hostname", ""))
+    record_type = str(monitor.config.get("record_type", "A")).upper()
+    started = time.perf_counter()
+    try:
+        safe_hostname(host)
+        records = await asyncio.to_thread(dns.resolver.resolve, host, record_type, lifetime=monitor.timeout_seconds)
+        values = sorted(str(record).rstrip(".") for record in records)
+        expected = monitor.config.get("expected_values", [])
+        if expected and not set(expected).issubset(values):
+            return CheckResult(MonitorStatus.DOWN, round((time.perf_counter() - started) * 1000), error_code="DNS_VALUE_MISMATCH", error_message="Expected DNS records were not returned", metadata={"records": values})
+        return CheckResult(MonitorStatus.UP, round((time.perf_counter() - started) * 1000), metadata={"records": values})
+    except (dns.exception.DNSException, UnsafeTargetError, ValueError) as exc:
+        return CheckResult(MonitorStatus.DOWN, None, error_code="DNS_ERROR", error_message=str(exc)[:500])
+
+
+def certificate_info(host: str, port: int, timeout: int) -> dict:
+    context = ssl.create_default_context()
+    with socket.create_connection((host, port), timeout=timeout) as connection, context.wrap_socket(connection, server_hostname=host) as tls:
+        return tls.getpeercert()
+
+
+async def ssl_check(monitor: Monitor) -> CheckResult:
+    host = str(monitor.config.get("host", ""))
+    port = int(monitor.config.get("port", 443))
+    started = time.perf_counter()
+    try:
+        resolve_public(host)
+        certificate = await asyncio.wait_for(asyncio.to_thread(certificate_info, host, port, monitor.timeout_seconds), timeout=monitor.timeout_seconds + 1)
+        expires = ssl.cert_time_to_seconds(certificate["notAfter"])
+        days_remaining = max(0, round((expires - time.time()) / 86400))
+        status = MonitorStatus.DEGRADED if days_remaining <= int(monitor.config.get("warning_days", 14)) else MonitorStatus.UP
+        return CheckResult(status, round((time.perf_counter() - started) * 1000), metadata={"issuer": certificate.get("issuer", []), "subject": certificate.get("subject", []), "expires_at": expires, "days_remaining": days_remaining})
+    except (OSError, ssl.SSLError, TimeoutError, UnsafeTargetError, ValueError) as exc:
+        return CheckResult(MonitorStatus.DOWN, None, error_code="TLS_ERROR", error_message=str(exc)[:500])
+
+
+async def domain_check(monitor: Monitor) -> CheckResult:
+    domain = str(monitor.config.get("domain", "")).lower().strip()
+    if not domain or "/" in domain:
+        return CheckResult(MonitorStatus.DOWN, None, error_code="INVALID_DOMAIN", error_message="A valid domain is required")
+    try:
+        async with httpx.AsyncClient(timeout=monitor.timeout_seconds) as client:
+            response = await client.get(f"https://rdap.org/domain/{domain}")
+        if response.status_code != 200:
+            return CheckResult(MonitorStatus.DOWN, None, response.status_code, "RDAP_ERROR", "RDAP lookup failed")
+        events = response.json().get("events", [])
+        expiry = next((event.get("eventDate") for event in events if event.get("eventAction") == "expiration"), None)
+        return CheckResult(MonitorStatus.UP if expiry else MonitorStatus.UNKNOWN, None, response.status_code, metadata={"expiration_date": expiry})
+    except httpx.HTTPError as exc:
+        return CheckResult(MonitorStatus.DOWN, None, error_code="RDAP_ERROR", error_message=str(exc)[:500])
+
+
+async def ping_check(monitor: Monitor) -> CheckResult:
+    host = str(monitor.config.get("host", ""))
+    try:
+        resolve_public(host)
+        started = time.perf_counter()
+        process = await asyncio.create_subprocess_exec("ping", "-c", "1", "-W", str(monitor.timeout_seconds), host, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        await asyncio.wait_for(process.wait(), timeout=monitor.timeout_seconds + 1)
+        if process.returncode == 0:
+            return CheckResult(MonitorStatus.UP, round((time.perf_counter() - started) * 1000))
+        return CheckResult(MonitorStatus.DOWN, None, error_code="PING_FAILED", error_message="Host did not respond to ICMP")
+    except (OSError, TimeoutError, UnsafeTargetError) as exc:
+        return CheckResult(MonitorStatus.DOWN, None, error_code="PING_ERROR", error_message=str(exc)[:500])
+
+
 async def execute(monitor: Monitor) -> CheckResult:
     if monitor.type in {MonitorType.HTTP, MonitorType.KEYWORD, MonitorType.JSON}:
         return await http_check(monitor)
     if monitor.type == MonitorType.TCP:
         return await tcp_check(monitor)
+    if monitor.type == MonitorType.DNS:
+        return await dns_check(monitor)
+    if monitor.type == MonitorType.SSL:
+        return await ssl_check(monitor)
+    if monitor.type == MonitorType.DOMAIN:
+        return await domain_check(monitor)
+    if monitor.type == MonitorType.PING:
+        return await ping_check(monitor)
     return CheckResult(MonitorStatus.UNKNOWN, None, error_code="UNSUPPORTED_MONITOR", error_message=f"{monitor.type.value} execution is not configured")

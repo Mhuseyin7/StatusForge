@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.models import MonitorStatus, MonitorType, Role
+from app.models import MonitorStatus, MonitorType, NotificationProviderType, Role
 
 
 class ORMModel(BaseModel):
@@ -109,3 +109,67 @@ class ApiKeyCreated(BaseModel):
 
 class HeartbeatResponse(BaseModel):
     accepted: bool
+
+
+class MaintenanceCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    description: str | None = Field(default=None, max_length=5000)
+    starts_at: datetime
+    ends_at: datetime
+    affected_monitor_ids: list[uuid.UUID] = Field(default_factory=list)
+    suppress_notifications: bool = True
+
+    @field_validator("ends_at")
+    @classmethod
+    def valid_duration(cls, value: datetime, info) -> datetime:
+        if info.data.get("starts_at") and value <= info.data["starts_at"]:
+            raise ValueError("ends_at must be after starts_at")
+        return value
+
+
+class MaintenanceResponse(ORMModel):
+    id: uuid.UUID
+    name: str
+    description: str | None
+    starts_at: datetime
+    ends_at: datetime
+    affected_monitor_ids: list
+    suppress_notifications: bool
+
+
+class StatusPageCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    slug: str = Field(min_length=3, max_length=100, pattern=r"^[a-z0-9-]+$")
+    description: str | None = Field(default=None, max_length=500)
+    theme: str = Field(default="system", pattern=r"^(light|dark|system)$")
+
+
+class StatusPageComponentCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    monitor_id: uuid.UUID | None = None
+    position: int = Field(default=0, ge=0)
+
+
+class StatusPageResponse(ORMModel):
+    id: uuid.UUID
+    name: str
+    slug: str
+    description: str | None
+    theme: str
+    is_published: bool
+
+
+class NotificationProviderCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    type: NotificationProviderType
+    config: dict = Field(default_factory=dict)
+
+
+class WebhookCreate(BaseModel):
+    url: str = Field(min_length=10, max_length=2048, pattern=r"^https://")
+    events: list[str] = Field(min_length=1, max_length=20)
+
+
+class WebhookCreated(BaseModel):
+    id: uuid.UUID
+    secret: str

@@ -55,6 +55,12 @@ class Severity(enum.StrEnum):
     CRITICAL = "CRITICAL"
 
 
+class NotificationProviderType(enum.StrEnum):
+    WEBHOOK = "WEBHOOK"
+    DISCORD = "DISCORD"
+    TELEGRAM = "TELEGRAM"
+
+
 class Timestamped:
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -175,4 +181,79 @@ class AuditLog(Base):
     ip_address: Mapped[str | None] = mapped_column(String(64))
     user_agent: Mapped[str | None] = mapped_column(String(512))
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MaintenanceWindow(Timestamped, Base):
+    __tablename__ = "maintenance_windows"
+    __table_args__ = (Index("ix_maintenance_org_schedule", "organization_id", "starts_at", "ends_at"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str | None] = mapped_column(Text)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    affected_monitor_ids: Mapped[list] = mapped_column(JSON, default=list)
+    suppress_notifications: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class StatusPage(Timestamped, Base):
+    __tablename__ = "status_pages"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    slug: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(String(500))
+    theme: Mapped[str] = mapped_column(String(20), default="system")
+    is_published: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class StatusPageComponent(Timestamped, Base):
+    __tablename__ = "status_page_components"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    status_page_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("status_pages.id", ondelete="CASCADE"), index=True)
+    monitor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("monitors.id", ondelete="SET NULL"))
+    name: Mapped[str] = mapped_column(String(120))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class NotificationProvider(Timestamped, Base):
+    __tablename__ = "notification_providers"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    type: Mapped[NotificationProviderType] = mapped_column(Enum(NotificationProviderType))
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class NotificationRule(Timestamped, Base):
+    __tablename__ = "notification_rules"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    provider_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("notification_providers.id", ondelete="CASCADE"), index=True)
+    events: Mapped[list] = mapped_column(JSON, default=list)
+    monitor_ids: Mapped[list] = mapped_column(JSON, default=list)
+    delay_seconds: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Webhook(Timestamped, Base):
+    __tablename__ = "webhooks"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    url: Mapped[str] = mapped_column(String(2048))
+    secret: Mapped[str] = mapped_column(String(255))
+    events: Mapped[list] = mapped_column(JSON, default=list)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class WebhookDelivery(Base):
+    __tablename__ = "webhook_deliveries"
+    __table_args__ = (Index("ix_webhook_deliveries_webhook_created", "webhook_id", "created_at"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    webhook_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("webhooks.id", ondelete="CASCADE"), index=True)
+    event: Mapped[str] = mapped_column(String(100))
+    status_code: Mapped[int | None] = mapped_column(Integer)
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
