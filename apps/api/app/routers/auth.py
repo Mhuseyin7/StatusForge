@@ -9,7 +9,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.dependencies import current_user
 from app.models import Organization, OrganizationMember, Role, SessionToken, User
-from app.schemas import LoginRequest, RegisterRequest, TokenResponse, UserResponse
+from app.schemas import LoginRequest, RegisterRequest, SessionResponse, TokenResponse, UserResponse
 from app.security import (
     create_access_token,
     hash_password,
@@ -17,6 +17,7 @@ from app.security import (
     token_hash,
     verify_password,
 )
+from app.services.rate_limit import clear_login_failures, ensure_login_allowed, record_login_failure
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -49,11 +50,16 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> TokenResponse:
-    user = db.scalar(select(User).where(User.email == str(payload.email).lower()))
+    email = str(payload.email).lower()
+    ip_address = request.client.host if request.client else "unknown"
+    ensure_login_allowed(email, ip_address)
+    user = db.scalar(select(User).where(User.email == email))
     if user is None or not user.is_active or not verify_password(payload.password, user.password_hash):
+        record_login_failure(email, ip_address)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
     tokens = issue_tokens(db, user, request)
     db.commit()
+    clear_login_failures(email, ip_address)
     return tokens
 
 
@@ -83,3 +89,19 @@ def logout(refresh_token: str, db: Session = Depends(get_db)) -> Response:
 @router.get("/me", response_model=UserResponse)
 def me(user: User = Depends(current_user)) -> User:
     return user
+
+
+@router.get("/sessions", response_model=list[SessionResponse])
+def list_sessions(user: User = Depends(current_user), db: Session = Depends(get_db)) -> list[SessionToken]:
+    now = datetime.now(UTC)
+    return list(db.scalars(select(SessionToken).where(SessionToken.user_id == user.id, SessionToken.revoked_at.is_(None), SessionToken.expires_at > now).order_by(SessionToken.created_at.desc())))
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_session(session_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)) -> Response:
+    session = db.scalar(select(SessionToken).where(SessionToken.id == session_id, SessionToken.user_id == user.id, SessionToken.revoked_at.is_(None)))
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session.revoked_at = datetime.now(UTC)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

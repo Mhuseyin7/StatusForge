@@ -34,6 +34,14 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class SessionResponse(ORMModel):
+    id: uuid.UUID
+    created_at: datetime
+    expires_at: datetime
+    user_agent: str | None
+    ip_address: str | None
+
+
 class UserResponse(ORMModel):
     id: uuid.UUID
     email: EmailStr
