@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     allow_private_monitors: bool = False
     log_level: str = "INFO"
     cors_origins: list[str] = ["http://localhost:3000"]
+    email_from: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = 465
+    smtp_username: str | None = None
+    smtp_password: str | None = None
 
     @field_validator("cors_origins", mode="before")
     @classmethod
