@@ -17,6 +17,10 @@ from app.models import (
     Monitor,
     MonitorCheck,
     MonitorStatus,
+    NotificationDelivery,
+    NotificationProvider,
+    NotificationProviderType,
+    NotificationRule,
     Webhook,
     WebhookDelivery,
     utcnow,
@@ -88,6 +92,36 @@ def deliver_event(self, organization_id: str, event: str, payload: dict) -> None
                 db.add(WebhookDelivery(webhook_id=webhook.id, event=event, status_code=response.status_code, error=None if response.is_success else f"HTTP {response.status_code}"))
             except httpx.HTTPError as exc:
                 db.add(WebhookDelivery(webhook_id=webhook.id, event=event, error=str(exc)[:500]))
+        monitor_id = str(payload.get("monitor", {}).get("id", ""))
+        rules = db.scalars(select(NotificationRule).where(NotificationRule.organization_id == uuid.UUID(organization_id), NotificationRule.events.contains([event]))).all()
+        for rule in rules:
+            if rule.monitor_ids and monitor_id not in rule.monitor_ids:
+                continue
+            if rule.delay_seconds:
+                deliver_provider.apply_async((str(rule.provider_id), event, payload), countdown=rule.delay_seconds)
+            else:
+                deliver_provider.delay(str(rule.provider_id), event, payload)
+        db.commit()
+
+
+@celery_app.task(name="statusforge.deliver_provider", bind=True, autoretry_for=(httpx.HTTPError,), retry_backoff=True, retry_kwargs={"max_retries": 3})
+def deliver_provider(self, provider_id: str, event: str, payload: dict) -> None:
+    with SessionLocal() as db:
+        provider = db.get(NotificationProvider, uuid.UUID(provider_id))
+        if provider is None or not provider.enabled:
+            return
+        config = provider.config
+        try:
+            if provider.type == NotificationProviderType.TELEGRAM:
+                url = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
+                response = httpx.post(url, json={"chat_id": config["chat_id"], "text": f"[{event}] {payload.get('monitor', {}).get('name', 'StatusForge monitor')}"}, timeout=10)
+            elif provider.type == NotificationProviderType.DISCORD:
+                response = httpx.post(config["url"], json={"content": f"[{event}] {payload.get('monitor', {}).get('name', 'StatusForge monitor')}"}, timeout=10)
+            else:
+                response = httpx.post(config["url"], json={"event": event, "timestamp": utcnow().isoformat(), **payload}, timeout=10)
+            db.add(NotificationDelivery(provider_id=provider.id, event=event, status_code=response.status_code, error=None if response.is_success else f"HTTP {response.status_code}"))
+        except (KeyError, httpx.HTTPError) as exc:
+            db.add(NotificationDelivery(provider_id=provider.id, event=event, error=str(exc)[:500]))
         db.commit()
 
 

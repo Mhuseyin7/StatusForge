@@ -257,3 +257,14 @@ class WebhookDelivery(Base):
     attempt: Mapped[int] = mapped_column(Integer, default=1)
     error: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class NotificationDelivery(Base):
+    __tablename__ = "notification_deliveries"
+    __table_args__ = (Index("ix_notification_deliveries_provider_created", "provider_id", "created_at"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    provider_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("notification_providers.id", ondelete="CASCADE"), index=True)
+    event: Mapped[str] = mapped_column(String(100))
+    status_code: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

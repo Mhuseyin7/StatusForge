@@ -12,6 +12,8 @@ from app.models import (
     MaintenanceWindow,
     Monitor,
     NotificationProvider,
+    NotificationProviderType,
+    NotificationRule,
     StatusPage,
     StatusPageComponent,
     User,
@@ -22,6 +24,7 @@ from app.schemas import (
     MaintenanceCreate,
     MaintenanceResponse,
     NotificationProviderCreate,
+    NotificationRuleCreate,
     StatusPageComponentCreate,
     StatusPageCreate,
     StatusPageResponse,
@@ -95,12 +98,39 @@ def add_component(organization_id: uuid.UUID, page_id: uuid.UUID, payload: Statu
 @router.post("/notification-providers", status_code=status.HTTP_201_CREATED)
 def create_provider(organization_id: uuid.UUID, payload: NotificationProviderCreate, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
     require_editor(organization_id, user, db)
+    if payload.type in {NotificationProviderType.WEBHOOK, NotificationProviderType.DISCORD}:
+        url = str(payload.config.get("url", ""))
+        try:
+            validate_url(url)
+        except UnsafeTargetError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if payload.type == NotificationProviderType.TELEGRAM and not {"bot_token", "chat_id"}.issubset(payload.config):
+        raise HTTPException(status_code=422, detail="Telegram providers require bot_token and chat_id")
     provider = NotificationProvider(organization_id=organization_id, **payload.model_dump())
     db.add(provider)
     db.flush()
     record(db, organization_id, user.id, "notification_provider.created", f"provider:{provider.id}")
     db.commit()
     return {"id": str(provider.id)}
+
+
+@router.post("/notification-rules", status_code=status.HTTP_201_CREATED)
+def create_notification_rule(organization_id: uuid.UUID, payload: NotificationRuleCreate, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+    require_editor(organization_id, user, db)
+    provider = db.scalar(select(NotificationProvider).where(NotificationProvider.id == payload.provider_id, NotificationProvider.organization_id == organization_id))
+    if provider is None:
+        raise HTTPException(status_code=422, detail="Notification provider not found")
+    monitor_ids = [str(value) for value in payload.monitor_ids]
+    if monitor_ids:
+        owned_monitors = db.scalars(select(Monitor.id).where(Monitor.organization_id == organization_id, Monitor.id.in_(payload.monitor_ids))).all()
+        if len(owned_monitors) != len(monitor_ids):
+            raise HTTPException(status_code=422, detail="All monitors must belong to the organization")
+    rule = NotificationRule(organization_id=organization_id, provider_id=provider.id, events=payload.events, monitor_ids=monitor_ids, delay_seconds=payload.delay_seconds)
+    db.add(rule)
+    db.flush()
+    record(db, organization_id, user.id, "notification_rule.created", f"notification_rule:{rule.id}")
+    db.commit()
+    return {"id": str(rule.id)}
 
 
 @router.post("/webhooks", response_model=WebhookCreated, status_code=status.HTTP_201_CREATED)

@@ -189,6 +189,13 @@ class NotificationProviderCreate(BaseModel):
     config: dict = Field(default_factory=dict)
 
 
+class NotificationRuleCreate(BaseModel):
+    provider_id: uuid.UUID
+    events: list[str] = Field(min_length=1, max_length=20)
+    monitor_ids: list[uuid.UUID] = Field(default_factory=list)
+    delay_seconds: int = Field(default=0, ge=0, le=86400)
+
+
 class WebhookCreate(BaseModel):
     url: str = Field(min_length=10, max_length=2048, pattern=r"^https://")
     events: list[str] = Field(min_length=1, max_length=20)
