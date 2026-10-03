@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
-from app.routers import api_keys, auth, monitors, operations, organizations, system
+from app.routers import api_keys, auth, incidents, monitors, operations, organizations, system
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level, format="%(message)s")
@@ -44,6 +44,7 @@ app.include_router(system.router)
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(organizations.router, prefix="/api/v1")
 app.include_router(monitors.router, prefix="/api/v1")
+app.include_router(incidents.router, prefix="/api/v1")
 app.include_router(api_keys.router, prefix="/api/v1")
 app.include_router(operations.router, prefix="/api/v1")
 app.include_router(operations.public_router, prefix="/api/v1")

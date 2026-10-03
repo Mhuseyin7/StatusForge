@@ -3,7 +3,14 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.models import MonitorStatus, MonitorType, NotificationProviderType, Role
+from app.models import (
+    IncidentStatus,
+    MonitorStatus,
+    MonitorType,
+    NotificationProviderType,
+    Role,
+    Severity,
+)
 
 
 class ORMModel(BaseModel):
@@ -83,6 +90,15 @@ class MonitorResponse(ORMModel):
     config: dict
     created_at: datetime
     updated_at: datetime
+
+
+class MonitorUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=160)
+    interval_seconds: int | None = Field(default=None, ge=30, le=86400)
+    timeout_seconds: int | None = Field(default=None, ge=1, le=120)
+    retry_count: int | None = Field(default=None, ge=1, le=10)
+    enabled: bool | None = None
+    config: dict | None = None
 
 
 class CheckResponse(ORMModel):
@@ -173,3 +189,25 @@ class WebhookCreate(BaseModel):
 class WebhookCreated(BaseModel):
     id: uuid.UUID
     secret: str
+
+
+class IncidentCreate(BaseModel):
+    title: str = Field(min_length=3, max_length=240)
+    monitor_id: uuid.UUID | None = None
+    severity: Severity = Severity.MAJOR
+    message: str = Field(min_length=3, max_length=5000)
+
+
+class IncidentUpdateCreate(BaseModel):
+    message: str = Field(min_length=3, max_length=5000)
+    status: IncidentStatus
+
+
+class IncidentResponse(ORMModel):
+    id: uuid.UUID
+    monitor_id: uuid.UUID | None
+    title: str
+    status: IncidentStatus
+    severity: Severity
+    started_at: datetime
+    resolved_at: datetime | None

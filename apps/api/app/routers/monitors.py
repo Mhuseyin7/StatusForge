@@ -8,7 +8,13 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import current_user, membership_for
 from app.models import Monitor, MonitorCheck, MonitorStatus, MonitorType, Role, User, utcnow
-from app.schemas import CheckResponse, HeartbeatResponse, MonitorCreate, MonitorResponse
+from app.schemas import (
+    CheckResponse,
+    HeartbeatResponse,
+    MonitorCreate,
+    MonitorResponse,
+    MonitorUpdate,
+)
 from app.services.audit import record
 from app.worker.tasks import enqueue_monitor
 
@@ -23,9 +29,9 @@ def require_editor(organization_id: uuid.UUID, user: User, db: Session):
 
 
 @router.get("", response_model=list[MonitorResponse])
-def list_monitors(organization_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)) -> list[Monitor]:
+def list_monitors(organization_id: uuid.UUID, limit: int = 50, offset: int = 0, user: User = Depends(current_user), db: Session = Depends(get_db)) -> list[Monitor]:
     membership_for(organization_id, user, db)
-    return list(db.scalars(select(Monitor).where(Monitor.organization_id == organization_id).order_by(Monitor.created_at.desc())))
+    return list(db.scalars(select(Monitor).where(Monitor.organization_id == organization_id).order_by(Monitor.created_at.desc()).offset(offset).limit(min(limit, 100))))
 
 
 @router.post("", response_model=MonitorResponse, status_code=status.HTTP_201_CREATED)
@@ -44,6 +50,31 @@ def create_monitor(organization_id: uuid.UUID, payload: MonitorCreate, user: Use
     db.commit()
     db.refresh(monitor)
     return monitor
+
+
+@router.patch("/{monitor_id}", response_model=MonitorResponse)
+def update_monitor(organization_id: uuid.UUID, monitor_id: uuid.UUID, payload: MonitorUpdate, user: User = Depends(current_user), db: Session = Depends(get_db)) -> Monitor:
+    require_editor(organization_id, user, db)
+    monitor = db.scalar(select(Monitor).where(Monitor.id == monitor_id, Monitor.organization_id == organization_id))
+    if monitor is None:
+        raise HTTPException(status_code=404, detail="Monitor not found")
+    for field, value in payload.model_dump(exclude_none=True).items():
+        setattr(monitor, field, value)
+    record(db, organization_id, user.id, "monitor.updated", f"monitor:{monitor.id}")
+    db.commit()
+    db.refresh(monitor)
+    return monitor
+
+
+@router.delete("/{monitor_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_monitor(organization_id: uuid.UUID, monitor_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)) -> None:
+    require_editor(organization_id, user, db)
+    monitor = db.scalar(select(Monitor).where(Monitor.id == monitor_id, Monitor.organization_id == organization_id))
+    if monitor is None:
+        raise HTTPException(status_code=404, detail="Monitor not found")
+    db.delete(monitor)
+    record(db, organization_id, user.id, "monitor.deleted", f"monitor:{monitor_id}")
+    db.commit()
 
 
 @router.post("/{monitor_id}/check", status_code=status.HTTP_202_ACCEPTED)
