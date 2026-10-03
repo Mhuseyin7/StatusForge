@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export default async function PublicStatusPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://api:8000";
+  const apiUrl = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || "http://api:8000";
   const response = await fetch(`${apiUrl}/api/v1/status/${encodeURIComponent(slug)}`, { next: { revalidate: 30 } });
   if (!response.ok) return <main className="public-status"><h1>Status page unavailable</h1><p>This status page does not exist or is not published.</p></main>;
   const page: StatusPage = await response.json();

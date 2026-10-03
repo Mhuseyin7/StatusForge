@@ -14,6 +14,7 @@ RUN npm run build
 FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+ENV API_INTERNAL_URL=http://api:8000
 RUN addgroup -S statusforge && adduser -S statusforge -G statusforge
 COPY --from=builder --chown=statusforge:statusforge /app/.next/standalone ./
 COPY --from=builder --chown=statusforge:statusforge /app/.next/static ./.next/static
