@@ -125,6 +125,8 @@ Tüm environment values `.env.example` içinde açıklanmış default değerlerl
 
 > `ALLOW_PRIVATE_MONITORS=true` yalnızca izole edilmiş ve güvenilen ağlarda kullanılmalıdır. Bu ayar SSRF koruma sınırlarını genişletir.
 
+Production deployment, SMTP, reverse proxy ve backup procedure’leri için [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) dosyasını takip et.
+
 ## Geliştirme
 
 Development komutları root dizinindeki `Makefile` üzerinden sağlanır:
@@ -164,6 +166,7 @@ Temel resource grupları:
 - `maintenance` — planned maintenance windows ve alert suppression
 - `status-pages` — public status page ve component yönetimi
 - `notification-providers` / `webhooks` — provider model ve signed webhook delivery
+- `auth/verify-email`, `auth/forgot-password`, `auth/reset-password` — SMTP tabanlı account recovery flow
 
 API hata cevapları tutarlı bir form kullanır:
 
