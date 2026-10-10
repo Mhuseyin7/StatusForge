@@ -9,7 +9,11 @@ type DashboardData = Parameters<typeof Dashboard>[0]["data"];
 
 export function App() {
   const [token, setToken] = useState<string | null>(null); const [organization, setOrganization] = useState<Organization | null>(null); const [data, setData] = useState<DashboardData | null>(null); const [error, setError] = useState(""); const [createOpen, setCreateOpen] = useState(false);
-  useEffect(() => { const stored = localStorage.getItem("statusforge_access_token"); if (stored) setToken(stored); }, []);
+  useEffect(() => {
+    const stored = localStorage.getItem("statusforge_access_token");
+    const timer = window.setTimeout(() => setToken(stored), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
   useEffect(() => { if (token) loadOrganizations(token); }, [token]);
   useEffect(() => { if (token && organization) loadDashboard(token, organization.id); }, [token, organization]);
   async function loadOrganizations(accessToken: string) { try { const response = await fetch(`${apiUrl}/api/v1/organizations`, { headers: { Authorization: `Bearer ${accessToken}` } }); const body = await response.json(); if (!response.ok) throw new Error(body.error?.message || "Session expired"); setOrganization(body[0] || null); } catch (reason) { localStorage.removeItem("statusforge_access_token"); setToken(null); setError(reason instanceof Error ? reason.message : "Unable to load account"); } }
