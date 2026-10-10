@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 import uuid
 
@@ -12,6 +13,7 @@ from app.routers import api_keys, auth, incidents, monitors, operations, organiz
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level, format="%(message)s")
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 app = FastAPI(title="StatusForge API", version="0.1.0", openapi_url="/api/v1/openapi.json", docs_url="/docs")
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=True, allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["Authorization", "Content-Type", "X-Request-ID"])
@@ -19,7 +21,8 @@ app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_cr
 
 @app.middleware("http")
 async def request_context(request: Request, call_next):
-    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    supplied_request_id = request.headers.get("X-Request-ID", "")
+    request_id = supplied_request_id if REQUEST_ID_PATTERN.fullmatch(supplied_request_id) else str(uuid.uuid4())
     started = time.perf_counter()
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id

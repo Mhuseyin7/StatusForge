@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import AnyHttpUrl, Field, PostgresDsn, field_validator
+from pydantic import AnyHttpUrl, Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,7 +27,14 @@ class Settings(BaseSettings):
     @field_validator("cors_origins", mode="before")
     @classmethod
     def split_origins(cls, value: str | list[str]) -> list[str]:
-        return value.split(",") if isinstance(value, str) else value
+        origins = value.split(",") if isinstance(value, str) else value
+        return [origin.strip() for origin in origins if origin.strip()]
+
+    @model_validator(mode="after")
+    def reject_unsafe_cors(self) -> "Settings":
+        if "*" in self.cors_origins:
+            raise ValueError("CORS_ORIGINS cannot contain '*' when credentials are enabled")
+        return self
 
 
 @lru_cache
