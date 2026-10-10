@@ -1,6 +1,9 @@
 import pytest
+from fastapi import HTTPException
 from httpx import Response
 
+from app.models import MonitorType
+from app.routers.monitors import validate_monitor_configuration
 from app.services.monitoring import UnsafeTargetError, json_assertions, safe_hostname
 
 
@@ -32,3 +35,13 @@ def test_json_assertions_fail_for_missing_or_unmatched_data() -> None:
 
     assert not json_assertions(response, [{"path": "$.service.latency", "operator": "min", "value": 100}])
     assert not json_assertions(response, [{"path": "$.service.region", "operator": "exists"}])
+
+
+def test_monitor_configuration_requires_type_specific_fields() -> None:
+    with pytest.raises(HTTPException, match="TCP monitors require config.host"):
+        validate_monitor_configuration(MonitorType.TCP, {})
+
+
+def test_monitor_configuration_rejects_unsafe_http_target() -> None:
+    with pytest.raises(HTTPException, match="local and metadata targets are blocked"):
+        validate_monitor_configuration(MonitorType.HTTP, {"url": "http://localhost:8000"})

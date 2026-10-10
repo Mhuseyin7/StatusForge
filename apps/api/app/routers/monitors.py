@@ -16,6 +16,7 @@ from app.schemas import (
     MonitorUpdate,
 )
 from app.services.audit import record
+from app.services.monitoring import UnsafeTargetError, validate_url
 from app.worker.tasks import enqueue_monitor
 
 router = APIRouter(prefix="/organizations/{organization_id}/monitors", tags=["monitors"])
@@ -26,6 +27,28 @@ def require_editor(organization_id: uuid.UUID, user: User, db: Session):
     if membership.role in {Role.VIEWER}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Editor role required")
     return membership
+
+
+def validate_monitor_configuration(monitor_type: MonitorType, config: dict) -> None:
+    required_fields = {
+        MonitorType.TCP: "host",
+        MonitorType.PING: "host",
+        MonitorType.DNS: "hostname",
+        MonitorType.SSL: "host",
+        MonitorType.DOMAIN: "domain",
+    }
+    if monitor_type in {MonitorType.HTTP, MonitorType.KEYWORD, MonitorType.JSON}:
+        url = config.get("url")
+        if not isinstance(url, str) or not url:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="HTTP-style monitors require config.url")
+        try:
+            validate_url(url)
+        except UnsafeTargetError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+        return
+    field = required_fields.get(monitor_type)
+    if field and not config.get(field):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"{monitor_type.value} monitors require config.{field}")
 
 
 @router.get("", response_model=list[MonitorResponse])
@@ -39,8 +62,7 @@ def create_monitor(organization_id: uuid.UUID, payload: MonitorCreate, user: Use
     require_editor(organization_id, user, db)
     if db.scalar(select(Monitor.id).where(Monitor.organization_id == organization_id, Monitor.slug == payload.slug)):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Monitor slug already exists")
-    if payload.type in {MonitorType.HTTP, MonitorType.KEYWORD, MonitorType.JSON} and not payload.config.get("url"):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="HTTP-style monitors require config.url")
+    validate_monitor_configuration(payload.type, payload.config)
     monitor = Monitor(organization_id=organization_id, **payload.model_dump())
     if monitor.type == MonitorType.HEARTBEAT:
         monitor.heartbeat_token = secrets.token_urlsafe(32)
@@ -58,6 +80,8 @@ def update_monitor(organization_id: uuid.UUID, monitor_id: uuid.UUID, payload: M
     monitor = db.scalar(select(Monitor).where(Monitor.id == monitor_id, Monitor.organization_id == organization_id))
     if monitor is None:
         raise HTTPException(status_code=404, detail="Monitor not found")
+    if payload.config is not None:
+        validate_monitor_configuration(monitor.type, payload.config)
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(monitor, field, value)
     record(db, organization_id, user.id, "monitor.updated", f"monitor:{monitor.id}")

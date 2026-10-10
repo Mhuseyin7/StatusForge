@@ -21,6 +21,7 @@ from app.models import (
 from app.schemas import (
     ForgotPasswordRequest,
     LoginRequest,
+    RefreshTokenRequest,
     RegisterRequest,
     ResetPasswordRequest,
     SessionResponse,
@@ -96,8 +97,8 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
 
 
 @router.post("/refresh", response_model=TokenResponse)
-def refresh(refresh_token: str, request: Request, db: Session = Depends(get_db)) -> TokenResponse:
-    session = db.scalar(select(SessionToken).where(SessionToken.token_hash == token_hash(refresh_token), SessionToken.revoked_at.is_(None)))
+def refresh(payload: RefreshTokenRequest, request: Request, db: Session = Depends(get_db)) -> TokenResponse:
+    session = db.scalar(select(SessionToken).where(SessionToken.token_hash == token_hash(payload.refresh_token), SessionToken.revoked_at.is_(None)))
     if session is None or session.expires_at <= datetime.now(UTC):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
     user = db.get(User, session.user_id)
@@ -110,8 +111,8 @@ def refresh(refresh_token: str, request: Request, db: Session = Depends(get_db))
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(refresh_token: str, db: Session = Depends(get_db)) -> Response:
-    session = db.scalar(select(SessionToken).where(SessionToken.token_hash == token_hash(refresh_token), SessionToken.revoked_at.is_(None)))
+def logout(payload: RefreshTokenRequest, db: Session = Depends(get_db)) -> Response:
+    session = db.scalar(select(SessionToken).where(SessionToken.token_hash == token_hash(payload.refresh_token), SessionToken.revoked_at.is_(None)))
     if session:
         session.revoked_at = datetime.now(UTC)
         db.commit()

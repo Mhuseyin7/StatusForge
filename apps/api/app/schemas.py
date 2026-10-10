@@ -37,6 +37,10 @@ class ResetPasswordRequest(BaseModel):
     password: str = Field(min_length=12, max_length=128)
 
 
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(min_length=32, max_length=256)
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
@@ -116,6 +120,13 @@ class MonitorUpdate(BaseModel):
     retry_count: int | None = Field(default=None, ge=1, le=10)
     enabled: bool | None = None
     config: dict | None = None
+
+    @field_validator("config")
+    @classmethod
+    def validate_config(cls, value: dict | None) -> dict | None:
+        if value is not None and len(value) > 30:
+            raise ValueError("configuration has too many keys")
+        return value
 
 
 class CheckResponse(ORMModel):
